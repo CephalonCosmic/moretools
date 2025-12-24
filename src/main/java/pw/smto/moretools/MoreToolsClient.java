@@ -4,11 +4,13 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.RenderStateDataKey;
+import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.client.render.RenderLayer;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.render.RenderLayers;
 import net.minecraft.client.render.VertexRendering;
+import net.minecraft.client.render.state.OutlineRenderState;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.NbtComponent;
 import net.minecraft.entity.player.PlayerEntity;
@@ -18,9 +20,10 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.shape.VoxelShapes;
 import pw.smto.moretools.item.BaseToolItem;
 
 import java.util.Objects;
@@ -36,36 +39,46 @@ public class MoreToolsClient implements ClientModInitializer {
             context.client().execute(() -> ClientPlayNetworking.send(new MoreTools.Payloads.C2SHandshakeCallbackWithVersion(MoreToolsClient.VERSION.split("\\+")[0])));
         });
 
-        WorldRenderEvents.BEFORE_BLOCK_OUTLINE.register((WorldRenderContext context, HitResult hitResult) -> {
-            if (context.matrixStack() == null) return true;
+        var directionState = RenderStateDataKey.create();
+
+        WorldRenderEvents.AFTER_BLOCK_OUTLINE_EXTRACTION.register((context, hit) -> {
+            if (hit instanceof BlockHitResult blockHit) {
+                if (blockHit.isInsideBlock()) return;
+
+                OutlineRenderState ors = context.worldState().outlineRenderState;
+
+                if (ors == null) return;
+
+                ors.setData(directionState, blockHit.getSide());
+            }
+        });
+
+        WorldRenderEvents.BEFORE_BLOCK_OUTLINE.register((context, hitResult) -> {
+            if (context.matrices() == null) return true;
             if (context.consumers() == null) return true;
 
-            BlockHitResult rtr = hitResult instanceof BlockHitResult ? (BlockHitResult) hitResult : null;
-            if(rtr == null) return true;
-            if (rtr.isInsideBlock()) return true;
             // This one too... what the hell is going on?
             PlayerEntity player = context.gameRenderer().getClient().player;
             if(player == null) return true;
             if (player.isSpectator()) return true;
             if (player.isSneaking()) return true;
 
-            if (player.getWorld().getBlockState(rtr.getBlockPos()).isAir()) return true;
+            if (player.getEntityWorld().getBlockState(hitResult.pos()).isAir()) return true;
             ItemStack tool = MoreToolsClient.convertPolymerStack(player.getMainHandStack());
             if(tool.isEmpty()) return true;
             if (tool.getItem() instanceof BaseToolItem t) {
-                var blocks = t.getAffectedArea(player.getWorld(), rtr.getBlockPos(), player.getWorld().getBlockState(rtr.getBlockPos()), rtr.getSide(), player.getWorld().getBlockState(rtr.getBlockPos()).getBlock());
+                var blocks = t.getAffectedArea(player.getEntityWorld(), hitResult.pos(), player.getEntityWorld().getBlockState(hitResult.pos()), (Direction) context.worldState().outlineRenderState.getData(directionState), player.getEntityWorld().getBlockState(hitResult.pos()).getBlock());
                 if(blocks == null || blocks.isEmpty()) return true;
 
-                double d0 = player.lastRenderX + (player.getX() - player.lastRenderX) * context.tickCounter().getTickProgress(true);
-                double d1 = player.lastRenderY + player.getStandingEyeHeight() + (player.getY() - player.lastRenderY) * context.tickCounter().getTickProgress(true);
-                double d2 = player.lastRenderZ + (player.getZ() - player.lastRenderZ) * context.tickCounter().getTickProgress(true);
+                double d0 = player.lastRenderX + (player.getX() - player.lastRenderX) * MinecraftClient.getInstance().getRenderTickCounter().getTickProgress(true);
+                double d1 = player.lastRenderY + player.getStandingEyeHeight() + (player.getY() - player.lastRenderY) * MinecraftClient.getInstance().getRenderTickCounter().getTickProgress(true);
+                double d2 = player.lastRenderZ + (player.getZ() - player.lastRenderZ) * MinecraftClient.getInstance().getRenderTickCounter().getTickProgress(true);
 
-                for(BlockPos block : blocks) {
-                    VertexRendering.drawBox(
-                            Objects.requireNonNull(context.matrixStack()),
-                            Objects.requireNonNull(context.consumers()).getBuffer(RenderLayer.getLines()),
-                            new Box(block).offset(-d0, -d1, -d2),
-                            1, 1, 1, 0.4F
+                for(BlockPos block : blocks) {                    VertexRendering.drawOutline(
+                            Objects.requireNonNull(context.matrices()),
+                            Objects.requireNonNull(context.consumers()).getBuffer(RenderLayers.lines()),
+                            VoxelShapes.cuboid(new Box(block).offset(-d0, -d1, -d2)),
+                            1, 1, 1, 0xFFFFFF, 0.4F
                     );
                 }
                 return false;
