@@ -7,23 +7,22 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.RenderStateDataKey;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.RenderLayers;
-import net.minecraft.client.render.VertexRendering;
-import net.minecraft.client.render.state.OutlineRenderState;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.NbtComponent;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.registry.Registries;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.shape.VoxelShapes;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.ShapeRenderer;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.client.renderer.state.BlockOutlineRenderState;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.shapes.Shapes;
 import org.jetbrains.annotations.NotNull;
 import org.joml.Vector3d;
 import pw.smto.moretools.item.BaseToolItem;
@@ -46,31 +45,31 @@ public class MoreToolsClient implements ClientModInitializer {
         RenderStateDataKey<@NotNull Vector3d> renderPos = RenderStateDataKey.create();
 
         WorldRenderEvents.AFTER_BLOCK_OUTLINE_EXTRACTION.register((context, hit) -> {
-            OutlineRenderState ors = context.worldState().outlineRenderState;
+            BlockOutlineRenderState ors = context.worldState().blockOutlineRenderState;
 
             if (ors == null) return;
 
             ors.setData(highlightedBlocks, List.of());
 
             if (hit instanceof BlockHitResult blockHit) {
-                if (blockHit.isInsideBlock()) return;
+                if (blockHit.isInside()) return;
 
                 // This one too... what the hell is going on?
-                PlayerEntity player = context.gameRenderer().getClient().player;
+                Player player = context.gameRenderer().getMinecraft().player;
                 if(player == null) return;
                 if (player.isSpectator()) return;
-                if (player.isSneaking()) return;
+                if (player.isShiftKeyDown()) return;
 
-                if (player.getEntityWorld().getBlockState(blockHit.getBlockPos()).isAir()) return;
-                ItemStack tool = MoreToolsClient.convertPolymerStack(player.getMainHandStack());
+                if (player.level().getBlockState(blockHit.getBlockPos()).isAir()) return;
+                ItemStack tool = MoreToolsClient.convertPolymerStack(player.getMainHandItem());
                 if(tool.isEmpty()) return;
                 if (tool.getItem() instanceof BaseToolItem t) {
-                    var blocks = t.getAffectedArea(player.getEntityWorld(), blockHit.getBlockPos(), player.getEntityWorld().getBlockState(blockHit.getBlockPos()), blockHit.getSide(), player.getEntityWorld().getBlockState(blockHit.getBlockPos()).getBlock());
+                    var blocks = t.getAffectedArea(player.level(), blockHit.getBlockPos(), player.level().getBlockState(blockHit.getBlockPos()), blockHit.getDirection(), player.level().getBlockState(blockHit.getBlockPos()).getBlock());
                     if (blocks == null || blocks.isEmpty()) return;
 
-                    double d0 = player.lastRenderX + (player.getX() - player.lastRenderX) * MinecraftClient.getInstance().getRenderTickCounter().getTickProgress(true);
-                    double d1 = player.lastRenderY + player.getStandingEyeHeight() + (player.getY() - player.lastRenderY) * MinecraftClient.getInstance().getRenderTickCounter().getTickProgress(true);
-                    double d2 = player.lastRenderZ + (player.getZ() - player.lastRenderZ) * MinecraftClient.getInstance().getRenderTickCounter().getTickProgress(true);
+                    double d0 = player.xOld + (player.getX() - player.xOld) * Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(true);
+                    double d1 = player.yOld + player.getEyeHeight() + (player.getY() - player.yOld) * Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(true);
+                    double d2 = player.zOld + (player.getZ() - player.zOld) * Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(true);
 
                     ors.setData(highlightedBlocks, blocks);
                     ors.setData(renderPos, new Vector3d(d0, d1, d2));
@@ -87,10 +86,10 @@ public class MoreToolsClient implements ClientModInitializer {
                 Vector3d pos = renderState.getDataOrDefault(renderPos, zero);
 
                 for(BlockPos block : blocks) {
-                    VertexRendering.drawOutline(
+                    ShapeRenderer.renderShape(
                         context.matrices(),
-                        context.consumers().getBuffer(RenderLayers.lines()),
-                        VoxelShapes.cuboid(new Box(block).offset(-pos.x(), -pos.y(), -pos.z())),
+                        context.consumers().getBuffer(RenderTypes.lines()),
+                        Shapes.create(new AABB(block).move(-pos.x(), -pos.y(), -pos.z())),
                         1, 1, 1, 0xFFFFFF, 0.4F
                     );
                 }
@@ -102,7 +101,7 @@ public class MoreToolsClient implements ClientModInitializer {
         });
 
         WorldRenderEvents.END_MAIN.register(context -> {
-            OutlineRenderState renderState = context.worldState().outlineRenderState;
+            BlockOutlineRenderState renderState = context.worldState().blockOutlineRenderState;
 
             if (renderState == null) return;
 
@@ -112,10 +111,10 @@ public class MoreToolsClient implements ClientModInitializer {
                 Vector3d pos = renderState.getDataOrDefault(renderPos, new Vector3d());
 
                 for(BlockPos block : blocks) {
-                    VertexRendering.drawOutline(
+                    ShapeRenderer.renderShape(
                         context.matrices(),
-                        context.consumers().getBuffer(RenderLayers.lines()),
-                        VoxelShapes.cuboid(new Box(block).offset(-pos.x(), -pos.y(), -pos.z())),
+                        context.consumers().getBuffer(RenderTypes.lines()),
+                        Shapes.create(new AABB(block).move(-pos.x(), -pos.y(), -pos.z())),
                         1, 1, 1, 0xFFFFFF, 0.4F
                     );
                 }
@@ -125,19 +124,19 @@ public class MoreToolsClient implements ClientModInitializer {
 
     public static ItemStack convertPolymerStack(ItemStack stack) {
         if (stack == null) return ItemStack.EMPTY;
-        if (stack.getComponents().contains(DataComponentTypes.CUSTOM_DATA)) {
-            var nbt = Objects.requireNonNull(stack.get(DataComponentTypes.CUSTOM_DATA)).copyNbt();
+        if (stack.getComponents().has(DataComponents.CUSTOM_DATA)) {
+            var nbt = Objects.requireNonNull(stack.get(DataComponents.CUSTOM_DATA)).copyTag();
             if (nbt.contains("$polymer:stack")) {
-                nbt = nbt.getCompound("$polymer:stack").orElse(new NbtCompound());
+                nbt = nbt.getCompound("$polymer:stack").orElse(new CompoundTag());
                 if (nbt.contains("id")) {
                     Identifier id = Identifier.tryParse(nbt.getString("id").orElse(""));
                     if (id != null) {
-                        Item item = Registries.ITEM.get(id);
-                        ItemStack newStack = item.getDefaultStack();
+                        Item item = BuiltInRegistries.ITEM.getValue(id);
+                        ItemStack newStack = item.getDefaultInstance();
                         try {
-                            nbt = nbt.getCompound("components").orElse(new NbtCompound()).getCompound("minecraft:custom_data").orElse(new NbtCompound());
+                            nbt = nbt.getCompound("components").orElse(new CompoundTag()).getCompound("minecraft:custom_data").orElse(new CompoundTag());
                         } catch (Exception ignored) {}
-                        newStack.set(DataComponentTypes.CUSTOM_DATA, NbtComponent.of(nbt));
+                        newStack.set(DataComponents.CUSTOM_DATA, CustomData.of(nbt));
                         return newStack;
                     }
                 }
