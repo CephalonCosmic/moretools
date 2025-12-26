@@ -80,7 +80,7 @@ public class MoreToolsClient implements ClientModInitializer {
                             context.matrices(),
                             vertexConsumer,
                             Shapes.block(),
-                            block.getX() - pos.x, block.getY() - pos.y, block.getZ() - pos.z, 0xFFFFFFFF, 0.4F
+                            block.getX() - pos.x, block.getY() - pos.y, block.getZ() - pos.z, 0xFFFFFFFF, 1F
                         );
                     }
                 }));
