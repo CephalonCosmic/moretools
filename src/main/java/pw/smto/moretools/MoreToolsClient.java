@@ -7,7 +7,6 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.RenderStateDataKey;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.ShapeRenderer;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.state.BlockOutlineRenderState;
@@ -20,11 +19,10 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
-import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.Shapes;
 import org.jetbrains.annotations.NotNull;
-import org.joml.Vector3d;
 import pw.smto.moretools.item.BaseToolItem;
 
 import java.util.List;
@@ -41,8 +39,7 @@ public class MoreToolsClient implements ClientModInitializer {
             context.client().execute(() -> ClientPlayNetworking.send(new MoreTools.Payloads.C2SHandshakeCallbackWithVersion(MoreToolsClient.VERSION.split("\\+")[0])));
         });
 
-        RenderStateDataKey<@NotNull List<BlockPos>> highlightedBlocks = RenderStateDataKey.create();
-        RenderStateDataKey<@NotNull Vector3d> renderPos = RenderStateDataKey.create();
+        RenderStateDataKey<@NotNull List<BlockPos>> highlightedBlocks = RenderStateDataKey.create(() -> "MoreTools Highlighted Blocks");
 
         WorldRenderEvents.AFTER_BLOCK_OUTLINE_EXTRACTION.register((context, hit) -> {
             BlockOutlineRenderState ors = context.worldState().blockOutlineRenderState;
@@ -54,7 +51,6 @@ public class MoreToolsClient implements ClientModInitializer {
             if (hit instanceof BlockHitResult blockHit) {
                 if (blockHit.isInside()) return;
 
-                // This one too... what the hell is going on?
                 Player player = context.gameRenderer().getMinecraft().player;
                 if(player == null) return;
                 if (player.isSpectator()) return;
@@ -67,58 +63,32 @@ public class MoreToolsClient implements ClientModInitializer {
                     var blocks = t.getAffectedArea(player.level(), blockHit.getBlockPos(), player.level().getBlockState(blockHit.getBlockPos()), blockHit.getDirection(), player.level().getBlockState(blockHit.getBlockPos()).getBlock());
                     if (blocks == null || blocks.isEmpty()) return;
 
-                    double d0 = player.xOld + (player.getX() - player.xOld) * Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(true);
-                    double d1 = player.yOld + player.getEyeHeight() + (player.getY() - player.yOld) * Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(true);
-                    double d2 = player.zOld + (player.getZ() - player.zOld) * Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(true);
-
                     ors.setData(highlightedBlocks, blocks);
-                    ors.setData(renderPos, new Vector3d(d0, d1, d2));
                 }
             }
         });
-
-        Vector3d zero = new Vector3d();
 
         WorldRenderEvents.BEFORE_BLOCK_OUTLINE.register((context, renderState) -> {
             var blocks = renderState.getDataOrDefault(highlightedBlocks, List.of());
 
             if (!blocks.isEmpty()) {
-                Vector3d pos = renderState.getDataOrDefault(renderPos, zero);
+                Vec3 pos = context.worldState().cameraRenderState.pos;
 
-                for(BlockPos block : blocks) {
-                    ShapeRenderer.renderShape(
-                        context.matrices(),
-                        context.consumers().getBuffer(RenderTypes.lines()),
-                        Shapes.create(new AABB(block).move(-pos.x(), -pos.y(), -pos.z())),
-                        1, 1, 1, 0xFFFFFF, 0.4F
-                    );
-                }
+                context.commandQueue().submitCustomGeometry(context.matrices(), RenderTypes.lines(), ((pose, vertexConsumer) -> {
+                    for(BlockPos block : blocks) {
+                        ShapeRenderer.renderShape(
+                            context.matrices(),
+                            vertexConsumer,
+                            Shapes.block(),
+                            block.getX() - pos.x, block.getY() - pos.y, block.getZ() - pos.z, 0xFFFFFFFF, 0.4F
+                        );
+                    }
+                }));
 
                 return false;
             }
 
             return true;
-        });
-
-        WorldRenderEvents.END_MAIN.register(context -> {
-            BlockOutlineRenderState renderState = context.worldState().blockOutlineRenderState;
-
-            if (renderState == null) return;
-
-            var blocks = renderState.getDataOrDefault(highlightedBlocks, List.of());
-
-            if (!blocks.isEmpty()) {
-                Vector3d pos = renderState.getDataOrDefault(renderPos, new Vector3d());
-
-                for(BlockPos block : blocks) {
-                    ShapeRenderer.renderShape(
-                        context.matrices(),
-                        context.consumers().getBuffer(RenderTypes.lines()),
-                        Shapes.create(new AABB(block).move(-pos.x(), -pos.y(), -pos.z())),
-                        1, 1, 1, 0xFFFFFF, 0.4F
-                    );
-                }
-            }
         });
     }
 
